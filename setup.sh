@@ -2,8 +2,10 @@
 #
 # setup.sh - install, fix, doctor and manage the terminal toolchain from README.md
 #
-# Targets: getnf fonts foot herdr zoxide eza bat fd fzf delta atuin carapace starship config
+# Targets: getnf fonts foot herdr zoxide eza bat fd fzf delta atuin carapace starship nu config
 # The delta target installs git-delta and sets it as git's pager in ~/.gitconfig.
+# The nu target installs Nushell. The config target then loads Starship in Nushell's
+# config.nu and sets herdr's default_shell to nu.
 # The config target also adds shell reminders: running ls suggests eza, cat suggests bat.
 # Run `./setup.sh help` for usage.
 #
@@ -29,7 +31,7 @@ readonly END_MARK='# <<< tersek setup <<<'
 # Matches fzf shell integration, both `fzf --bash|--zsh` and the older ~/.fzf.bash|zsh.
 readonly FZF_RC_REGEX='fzf --(bash|zsh)|\.fzf\.(bash|zsh)'
 
-ALL_TARGETS=(getnf fonts foot herdr zoxide eza bat fd fzf delta atuin carapace starship config)
+ALL_TARGETS=(getnf fonts foot herdr zoxide eza bat fd fzf delta atuin carapace starship nu config)
 
 # git settings for delta, from https://dandavison.github.io/delta/get-started.html
 # Format: <git config key>|<value>
@@ -57,6 +59,7 @@ declare -A VERSION_CMD=(
   [atuin]="atuin --version"
   [carapace]="carapace --version"
   [starship]="starship --version"
+  [nu]="nu --version"
 )
 
 # --- state ---------------------------------------------------------------------
@@ -337,6 +340,23 @@ do_install_carapace() {
     | "${SUDO[@]}" tee /etc/apt/sources.list.d/fury.list >/dev/null || return 1
   "${SUDO[@]}" apt-get update && as_root_slow "apt install carapace-bin" apt-get install -y carapace-bin
 }
+do_install_nu() {
+  # apt first (Fury repo, per https://www.nushell.sh/book/installation.html),
+  # brew only when apt is not available.
+  have apt-get || { pkg_install nushell nushell; return; }
+  have curl && have gpg || { bad "nu: apt needs curl and gpg to add the Fury repo"; return 1; }
+  if ((DRY_RUN)); then
+    echo "  [dry-run] add apt.fury.io/nushell apt repo and apt-get install nushell"
+    return 0
+  fi
+  if ((${#SUDO[@]})); then "${SUDO[@]}" -v || return 1; fi
+  "${SUDO[@]}" mkdir -p /etc/apt/keyrings || return 1
+  curl --proto '=https' --tlsv1.2 -fsSL https://apt.fury.io/nushell/gpg.key \
+    | "${SUDO[@]}" gpg --dearmor --yes -o /etc/apt/keyrings/fury-nushell.gpg || return 1
+  echo "deb [signed-by=/etc/apt/keyrings/fury-nushell.gpg] https://apt.fury.io/nushell/ /" \
+    | "${SUDO[@]}" tee /etc/apt/sources.list.d/fury-nushell.list >/dev/null || return 1
+  "${SUDO[@]}" apt-get update && as_root_slow "apt install nushell" apt-get install -y nushell
+}
 
 # --- per-tool update -----------------------------------------------------------
 do_update_getnf()    { do_install_getnf; }
@@ -350,6 +370,7 @@ do_update_fd()       { pkg_upgrade fd fd-find; }
 do_update_fzf()      { pkg_upgrade fzf fzf; }
 do_update_delta()    { pkg_upgrade git-delta git-delta; }
 do_update_carapace() { pkg_upgrade carapace carapace-bin; }
+do_update_nu()       { pkg_upgrade nushell nushell; }
 do_update_starship() {
   local dir
   dir=$(dirname "$(command -v starship)")
@@ -436,13 +457,82 @@ config_foot() { # <force 0|1>
   fi
 }
 
-config_herdr() {
-  if [[ -f $HERDR_CONF ]]; then ok "herdr config present: $HERDR_CONF"; return 0; fi
-  info "creating $HERDR_CONF"
-  if ((DRY_RUN)); then echo "  [dry-run] write herdr config.toml"; return 0; fi
-  mkdir -p -- "$(dirname "$HERDR_CONF")" || return 1
-  printf 'onboarding = false\n\n[ui]\nsidebar_collapsed_mode = "compact"\n' >"$HERDR_CONF" \
-    && ok "herdr config created"
+config_herdr() { # <force 0|1>
+  local force=$1 cur tmp
+  if [[ ! -f $HERDR_CONF ]]; then
+    info "creating $HERDR_CONF"
+    if ((DRY_RUN)); then echo "  [dry-run] write herdr config.toml"
+    else
+      mkdir -p -- "$(dirname "$HERDR_CONF")" || return 1
+      printf 'onboarding = false\n\n[ui]\nsidebar_collapsed_mode = "compact"\n' >"$HERDR_CONF" \
+        && ok "herdr config created"
+    fi
+  else
+    ok "herdr config present: $HERDR_CONF"
+  fi
+  # Only point herdr at nu once nu exists, or every new pane would fail to start.
+  have nu || { ((DRY_RUN)) || warn "nu is not installed; herdr default_shell left alone"; return 0; }
+  cur=$(herdr_shell)
+  if [[ $cur == nu ]]; then ok "herdr default_shell = nu"; return 0; fi
+  if [[ -n $cur && $force != 1 ]]; then
+    warn "herdr default_shell is '$cur', expected 'nu' (run: $SCRIPT_NAME fix config)"
+    return 0
+  fi
+  info "setting default_shell = \"nu\" in $HERDR_CONF"
+  backup_file "$HERDR_CONF"
+  ((DRY_RUN)) && { echo "  [dry-run] set [terminal] default_shell = \"nu\""; return 0; }
+  tmp=$(mktemp) || return 1
+  if [[ -n $cur ]]; then
+    awk '/^[[:space:]]*\[/ {sec=$0; gsub(/[[:space:]]/, "", sec)}
+         sec=="[terminal]" && /^[[:space:]]*default_shell[[:space:]]*=/ && !d {print "default_shell = \"nu\""; d=1; next}
+         {print}' "$HERDR_CONF" >"$tmp"
+  elif grep -q '^\[terminal\][[:space:]]*$' "$HERDR_CONF"; then
+    awk '{print} /^\[terminal\][[:space:]]*$/ && !d {print "default_shell = \"nu\""; d=1}' "$HERDR_CONF" >"$tmp"
+  else
+    { cat "$HERDR_CONF"; printf '\n[terminal]\ndefault_shell = "nu"\n'; } >"$tmp"
+  fi
+  cat "$tmp" >"$HERDR_CONF"; rm -f -- "$tmp"
+  ok "herdr default_shell = nu (new panes only; existing panes keep their shell)"
+}
+
+# Value of default_shell in herdr's [terminal] section, quotes stripped.
+herdr_shell() {
+  [[ -f $HERDR_CONF ]] || return 0
+  awk '/^[[:space:]]*\[/ {sec=$0; gsub(/[[:space:]]/, "", sec)}
+       sec=="[terminal]" && /^[[:space:]]*default_shell[[:space:]]*=/ {
+         sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*(#.*)?$/, ""); gsub(/"/, ""); print; exit }' "$HERDR_CONF"
+}
+
+# --- nushell: starship ---------------------------------------------------------
+# Nushell cannot eval, so starship's init script is generated into the vendor autoload
+# directory and config.nu only has to regenerate it (Nushell 0.96+).
+nu_config_path() { nu --no-config-file -c 'print $nu.config-path' </dev/null 2>/dev/null; }
+
+config_nu() {
+  have nu || { ((DRY_RUN)) || warn "nu is not installed; skipping Nushell config"; return 0; }
+  have starship || { warn "starship is not installed; skipping Nushell prompt"; return 0; }
+  local cfg
+  cfg=$(nu_config_path)
+  [[ -n $cfg ]] || { bad "could not read \$nu.config-path from nu"; return 1; }
+  if [[ -f $cfg ]] && grep -Eq '^[^#]*starship init nu' "$cfg"; then
+    ok "$cfg loads starship"
+  else
+    info "updating $cfg"
+    backup_file "$cfg"
+    if ((DRY_RUN)); then echo "  [dry-run] append starship autoload snippet to $cfg"
+    else
+      mkdir -p -- "$(dirname "$cfg")" || return 1
+      printf '\n%s\n%s\n%s\n%s\n' "$BEGIN_MARK" \
+        'mkdir ($nu.data-dir | path join "vendor/autoload")' \
+        'starship init nu | save -f ($nu.data-dir | path join "vendor/autoload/starship.nu")' \
+        "$END_MARK" >>"$cfg" && ok "$cfg updated (managed block: $BEGIN_MARK)"
+    fi
+  fi
+  # Generate it now, so the very first nu session already shows the prompt.
+  if ((DRY_RUN)); then echo "  [dry-run] generate vendor/autoload/starship.nu"; return 0; fi
+  timeout 20 nu --no-config-file -c \
+    'mkdir ($nu.data-dir | path join "vendor/autoload"); starship init nu | save -f ($nu.data-dir | path join "vendor/autoload/starship.nu")' \
+    </dev/null && ok "starship autoload file generated" || bad "could not generate starship.nu"
 }
 
 # --- delta: git config ---------------------------------------------------------
@@ -600,7 +690,8 @@ config_profiles() {
 
 apply_config() { # <force 0|1>
   config_foot "$1"
-  config_herdr
+  config_herdr "$1"
+  config_nu
   config_profiles
   rc_apply bash "$HOME/.bashrc"
   if have zsh; then rc_apply zsh "$HOME/.zshrc"; else echo "  zsh not installed; skipping ~/.zshrc"; fi
@@ -673,6 +764,20 @@ check_config() {
     warn "$FOOT_CONF missing; foot runs on defaults without $FONT_FAMILY"
   fi
   if [[ -f $HERDR_CONF ]]; then ok "herdr config: $HERDR_CONF"; else warn "$HERDR_CONF missing"; fi
+  if have nu; then
+    cur=$(herdr_shell)
+    if [[ $cur == nu ]]; then ok "herdr default_shell = nu"
+    else warn "herdr default_shell is '${cur:-unset}', expected 'nu' (run: $SCRIPT_NAME fix config)"; fi
+    if have starship; then
+      local nucfg
+      nucfg=$(nu_config_path)
+      if [[ -n $nucfg ]] && grep -Eq '^[^#]*starship init nu' "$nucfg" 2>/dev/null; then
+        ok "$nucfg loads starship"
+      else
+        warn "Nushell config does not load starship (run: $SCRIPT_NAME fix config)"
+      fi
+    fi
+  fi
   [[ -f $HOME/.atuin/bin/env ]] && for f in "$HOME/.profile" "$HOME/.bash_profile"; do
     [[ -f $f ]] || continue
     grep -Eq '^[^#]*\.atuin/bin/env' "$f" || warn "$f does not source ~/.atuin/bin/env"
@@ -845,6 +950,11 @@ Notes:
     (~/.gitconfig is backed up first).
   - Remote installers (getnf, herdr, zoxide, atuin, starship) are downloaded to a
     temp file and executed. Use --dry-run to see which ones would run.
+  - The nu target installs Nushell from the Fury apt repo (brew when apt is missing).
+    The config target then adds a managed block to Nushell's config.nu that generates
+    Starship's autoload file, and sets default_shell = "nu" in the [terminal] section of
+    herdr's config. It only does so once nu is installed. install keeps a default_shell
+    you already set; fix overrides it. Panes that are already open keep their shell.
   - Shell lines go in a managed block in ~/.bashrc (and ~/.zshrc if zsh is installed),
     delimited by "$BEGIN_MARK". Lines you already have outside it are left alone.
     Files are backed up as <file>.tersek-bak.<timestamp> before any change.

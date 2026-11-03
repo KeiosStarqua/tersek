@@ -13,8 +13,9 @@ Notes to rebuild my terminal on a new machine.
 | [Atuin](https://github.com/atuinsh/atuin) | Shell history search and sync | 18.24.4 |
 | [carapace-bin](https://carapace-sh.github.io/carapace-bin/install.html) | Multi-shell command completion | not installed on this machine yet |
 | [Starship](https://starship.rs) | Shell prompt | not installed on this machine yet |
+| [Nushell](https://www.nushell.sh) | Shell herdr opens in new panes (`default_shell = "nu"`), prompt by Starship | latest from the Fury apt repo |
 
-Shells: bash (`~/.bashrc`) and zsh (`~/.zshrc`).
+Shells: bash (`~/.bashrc`), zsh (`~/.zshrc`) and Nushell (`config.nu`). `./setup.sh install nu config` installs Nushell, loads Starship in it and sets herdr's `default_shell`. Panes that are already open keep their shell.
 
 ## Install
 
