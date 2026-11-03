@@ -2,7 +2,8 @@
 #
 # setup.sh - install, fix, doctor and manage the terminal toolchain from README.md
 #
-# Targets: getnf fonts foot herdr zoxide eza bat fd fzf delta atuin carapace starship nu config
+# Targets: getnf fonts foot herdr zoxide eza bat fd rg fzf delta atuin carapace starship nu config
+# The rg target installs ripgrep (the binary is rg).
 # The delta target installs git-delta and sets it as git's pager in ~/.gitconfig.
 # The nu target installs Nushell. The config target then loads Starship in Nushell's
 # config.nu and sets herdr's default_shell to nu.
@@ -31,7 +32,7 @@ readonly END_MARK='# <<< tersek setup <<<'
 # Matches fzf shell integration, both `fzf --bash|--zsh` and the older ~/.fzf.bash|zsh.
 readonly FZF_RC_REGEX='fzf --(bash|zsh)|\.fzf\.(bash|zsh)'
 
-ALL_TARGETS=(getnf fonts foot herdr zoxide eza bat fd fzf delta atuin carapace starship nu config)
+ALL_TARGETS=(getnf fonts foot herdr zoxide eza bat fd rg fzf delta atuin carapace starship nu config)
 
 # git settings for delta, from https://dandavison.github.io/delta/get-started.html
 # Format: <git config key>|<value>
@@ -54,6 +55,7 @@ declare -A VERSION_CMD=(
   [eza]="eza --version"
   [bat]="bat --version"
   [fd]="fd --version"
+  [rg]="rg --version"
   [fzf]="fzf --version"
   [delta]="delta --version"
   [atuin]="atuin --version"
@@ -320,6 +322,8 @@ do_install_fd() {
     run mkdir -p -- "$HOME/.local/bin" && run ln -sf -- "$(command -v fdfind)" "$HOME/.local/bin/fd"
   fi
 }
+# The formula and the apt package are called ripgrep; the binary is rg.
+do_install_rg()       { pkg_install ripgrep ripgrep; }
 do_install_fzf()      { pkg_install fzf fzf; }
 # The formula and the apt package are called git-delta; the binary is delta.
 do_install_delta()    { pkg_install git-delta git-delta; }
@@ -367,6 +371,7 @@ do_update_atuin()    { do_install_atuin; }
 do_update_eza()      { pkg_upgrade eza eza; }
 do_update_bat()      { pkg_upgrade bat bat; }
 do_update_fd()       { pkg_upgrade fd fd-find; }
+do_update_rg()       { pkg_upgrade ripgrep ripgrep; }
 do_update_fzf()      { pkg_upgrade fzf fzf; }
 do_update_delta()    { pkg_upgrade git-delta git-delta; }
 do_update_carapace() { pkg_upgrade carapace carapace-bin; }

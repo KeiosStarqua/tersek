@@ -84,7 +84,7 @@ This repo is flat (no subfolders) and has no child AGENTS.md. The root owns ever
 
 - `setup.sh`: Bash installer and manager for the terminal toolchain described in `README.md`.
   - Commands: `install`, `auto`, `fix`, `doctor`, `update`, `status`, `help`. Options: `-y/--yes`, `-n/--dry-run`. Run with no command for a menu.
-  - Targets (`ALL_TARGETS`): getnf, fonts, foot, herdr, zoxide, eza, bat, fd, fzf, delta, atuin, carapace, starship, config. Each target has `do_install_*`, `do_update_*` and `check_*` handlers dispatched by `install_target`, `update_target`, `fix_target`, `doctor_target`, `status_target`. Adding a target means updating `ALL_TARGETS`, `VERSION_CMD` (for binaries), those handlers, and `usage`.
+  - Targets (`ALL_TARGETS`): getnf, fonts, foot, herdr, zoxide, eza, bat, fd, rg (ripgrep), fzf, delta, atuin, carapace, starship, config. Each target has `do_install_*`, `do_update_*` and `check_*` handlers dispatched by `install_target`, `update_target`, `fix_target`, `doctor_target`, `status_target`. Adding a target means updating `ALL_TARGETS`, `VERSION_CMD` (for binaries), those handlers, and `usage`.
   - Contracts: idempotent; `install` never upgrades; `doctor` and `status` change nothing; `doctor` exits 1 on failures. Every mutating command honors `--dry-run` through `run`, `run_slow` or `as_root_slow`.
   - Shell config lives in a managed block in `~/.bashrc` and `~/.zshrc` between `BEGIN_MARK` and `END_MARK`. Lines outside the block are never touched, and each edited file is backed up as `<file>.tersek-bak.<timestamp>` first. `~/.gitconfig` (delta settings) and `foot.ini` are backed up the same way before changes.
   - Remote installers are downloaded to a temp file, then executed, via `run_remote`.

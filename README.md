@@ -8,6 +8,7 @@ Notes to rebuild my terminal on a new machine.
 | [herdr](https://herdr.dev) | Terminal workspace / multiplexer, runs inside Foot | 0.9.5 |
 | [zoxide](https://github.com/ajeetdsouza/zoxide) | Smarter `cd` | 0.10.0 |
 | [fd](https://github.com/sharkdp/fd#installation) | Fast, friendly `find` alternative (`sudo apt install fd-find`) | latest from apt |
+| [ripgrep](https://github.com/BurntSushi/ripgrep#installation) | Fast recursive text search (`brew install ripgrep`, binary is `rg`) | 15.2.0 (Homebrew) |
 | [fzf](https://github.com/junegunn/fzf) | Fuzzy finder | 0.74.5 (Homebrew) |
 | [delta](https://github.com/dandavison/delta) | Syntax-highlighting pager for git diff, show and log (`brew install git-delta`, binary is `delta`) | 0.20.1 (Homebrew) |
 | [Atuin](https://github.com/atuinsh/atuin) | Shell history search and sync | 18.24.4 |
@@ -26,6 +27,7 @@ Where each tool lives on my machine:
 | foot | `/usr/bin/foot` (system package) |
 | herdr | `~/.local/bin/herdr` |
 | zoxide | `~/.local/bin/zoxide` |
+| rg | `/home/linuxbrew/.linuxbrew/bin/rg` (Homebrew) |
 | fzf | `/home/linuxbrew/.linuxbrew/bin/fzf` (Homebrew) |
 | atuin | `~/.atuin/bin/atuin` |
 | carapace | not installed here; see below |
@@ -43,6 +45,9 @@ curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh 
 # fd (Debian/Ubuntu names the binary fdfind; link it to fd)
 sudo apt install fd-find
 mkdir -p ~/.local/bin && ln -sf "$(command -v fdfind)" ~/.local/bin/fd
+
+# ripgrep (binary is rg)
+brew install ripgrep
 
 # fzf
 brew install fzf
