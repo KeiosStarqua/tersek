@@ -24,6 +24,8 @@ HERDR_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml"
 
 readonly BEGIN_MARK='# >>> tersek setup >>>'
 readonly END_MARK='# <<< tersek setup <<<'
+# Matches fzf shell integration, both `fzf --bash|--zsh` and the older ~/.fzf.bash|zsh.
+readonly FZF_RC_REGEX='fzf --(bash|zsh)|\.fzf\.(bash|zsh)'
 
 ALL_TARGETS=(getnf fonts foot herdr zoxide eza fzf atuin carapace starship config)
 
@@ -419,6 +421,10 @@ rc_wanted() { # <shell> <outside-content>
   if have carapace && ! rc_has "$content" 'carapace _carapace'; then
     printf '%s\n' 'command -v carapace >/dev/null 2>&1 && source <(carapace _carapace)'
   fi
+  # fzf must be initialised before atuin, or fzf takes over Ctrl-R (see rc_apply placement).
+  if have fzf && ! rc_has "$content" "$FZF_RC_REGEX"; then
+    printf 'command -v fzf >/dev/null 2>&1 && eval "$(fzf --%s)"\n' "$sh"
+  fi
   if [[ -f $HOME/.atuin/bin/env ]] && ! rc_has "$content" '\.atuin/bin/env'; then
     printf '%s\n' '[ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"'
   fi
@@ -431,11 +437,23 @@ rc_wanted() { # <shell> <outside-content>
 }
 
 rc_apply() { # <shell> <rc file>
-  local sh=$1 rc=$2 outside wanted new current
+  local sh=$1 rc=$2 outside wanted new current block atuin_line before after
   outside=$(rc_outside "$rc")
   wanted=$(rc_wanted "$sh" "$outside")
   if [[ -n $wanted ]]; then
-    new="$outside"$'\n\n'"$BEGIN_MARK"$'\n'"$wanted"$'\n'"$END_MARK"
+    block="$BEGIN_MARK"$'\n'"$wanted"$'\n'"$END_MARK"
+    atuin_line=$(grep -En '^[^#]*atuin init' <<<"$outside" | head -n1 | cut -d: -f1)
+    if [[ $wanted == *'fzf --'* && -n $atuin_line ]]; then
+      # The user's own atuin init sits outside our block. Put the block right before it so
+      # fzf is initialised first and does not take over Ctrl-R.
+      before=$(head -n "$((atuin_line - 1))" <<<"$outside")
+      after=$(tail -n "+$atuin_line" <<<"$outside")
+      if [[ -n $before ]]; then new="$before"$'\n\n'"$block"$'\n\n'"$after"
+      else new="$block"$'\n\n'"$after"
+      fi
+    else
+      new="$outside"$'\n\n'"$block"
+    fi
   else
     new=$outside
   fi
@@ -507,7 +525,7 @@ check_rc_file() { # <shell> <rc>
   local sh=$1 rc=$2 name pattern count
   if [[ ! -f $rc ]]; then warn "$rc missing"; return; fi
   if "$sh" -n "$rc" 2>/dev/null; then ok "$rc syntax ok"; else bad "$rc has a syntax error ($sh -n)"; fi
-  for name in zoxide:'zoxide init' atuin:'atuin init' carapace:'carapace _carapace' starship:'starship init'; do
+  for name in zoxide:'zoxide init' fzf:"$FZF_RC_REGEX" atuin:'atuin init' carapace:'carapace _carapace' starship:'starship init'; do
     pattern=${name#*:}; name=${name%%:*}
     have "$name" || continue
     count=$(grep -Ec -- "^[^#]*($pattern)" "$rc")

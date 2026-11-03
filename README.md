@@ -65,6 +65,9 @@ eval "$(zoxide init bash)"
 
 # ... other config ...
 
+# fzf shell integration; keep it above atuin so atuin owns Ctrl-R
+eval "$(fzf --bash)"
+
 . "$HOME/.atuin/bin/env"
 eval "$(atuin init bash)"
 
@@ -78,6 +81,9 @@ eval "$(starship init bash)"
 ### `~/.zshrc`
 
 ```zsh
+# fzf shell integration; keep it above atuin so atuin owns Ctrl-R
+eval "$(fzf --zsh)"
+
 . "$HOME/.atuin/bin/env"
 eval "$(atuin init zsh)"
 
