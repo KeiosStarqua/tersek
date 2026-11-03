@@ -2,7 +2,7 @@
 #
 # setup.sh - install, fix, doctor and manage the terminal toolchain from README.md
 #
-# Targets: getnf fonts foot herdr zoxide eza fzf atuin carapace starship config
+# Targets: getnf fonts foot herdr zoxide eza bat fzf atuin carapace starship config
 # Run `./setup.sh help` for usage.
 #
 # In an interactive terminal the script installs gum (https://github.com/charmbracelet/gum)
@@ -27,7 +27,7 @@ readonly END_MARK='# <<< tersek setup <<<'
 # Matches fzf shell integration, both `fzf --bash|--zsh` and the older ~/.fzf.bash|zsh.
 readonly FZF_RC_REGEX='fzf --(bash|zsh)|\.fzf\.(bash|zsh)'
 
-ALL_TARGETS=(getnf fonts foot herdr zoxide eza fzf atuin carapace starship config)
+ALL_TARGETS=(getnf fonts foot herdr zoxide eza bat fzf atuin carapace starship config)
 
 declare -A VERSION_CMD=(
   [getnf]="getnf -V"
@@ -35,6 +35,7 @@ declare -A VERSION_CMD=(
   [herdr]="herdr --version"
   [zoxide]="zoxide --version"
   [eza]="eza --version"
+  [bat]="bat --version"
   [fzf]="fzf --version"
   [atuin]="atuin --version"
   [carapace]="carapace --version"
@@ -273,6 +274,19 @@ do_install_herdr()    { run_remote https://herdr.dev/install.sh sh; }
 do_install_zoxide()   { run_remote https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh sh; }
 do_install_atuin()    { run_remote https://setup.atuin.sh sh; }
 do_install_eza()      { pkg_install eza eza; }
+do_install_bat() {
+  # apt first (sudo apt install bat, per https://github.com/sharkdp/bat#installation),
+  # brew only when apt is not available.
+  if have apt-get; then as_root_slow "apt install bat" apt-get install -y bat || { bad "bat: apt-get install failed"; return 1; }
+  else pkg_install bat bat || return 1
+  fi
+  ((DRY_RUN)) && return 0
+  hash -r
+  # Debian and Ubuntu ship the binary as batcat; expose it as bat.
+  if ! have bat && have batcat; then
+    run mkdir -p -- "$HOME/.local/bin" && run ln -sf -- "$(command -v batcat)" "$HOME/.local/bin/bat"
+  fi
+}
 do_install_fzf()      { pkg_install fzf fzf; }
 do_install_starship() {
   # -b keeps the install in ~/.local/bin so no sudo is needed.
@@ -299,6 +313,7 @@ do_update_herdr()    { run_slow "herdr update" herdr update </dev/null; }
 do_update_zoxide()   { do_install_zoxide; }
 do_update_atuin()    { do_install_atuin; }
 do_update_eza()      { pkg_upgrade eza eza; }
+do_update_bat()      { pkg_upgrade bat bat; }
 do_update_fzf()      { pkg_upgrade fzf fzf; }
 do_update_carapace() { pkg_upgrade carapace carapace-bin; }
 do_update_starship() {
