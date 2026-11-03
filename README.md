@@ -7,6 +7,7 @@ Notes to rebuild my terminal on a new machine.
 | [Foot](https://codeberg.org/dnkl/foot) | Terminal emulator (Wayland) | 1.25.0 |
 | [herdr](https://herdr.dev) | Terminal workspace / multiplexer, runs inside Foot | 0.9.5 |
 | [zoxide](https://github.com/ajeetdsouza/zoxide) | Smarter `cd` | 0.10.0 |
+| [fd](https://github.com/sharkdp/fd#installation) | Fast, friendly `find` alternative (`sudo apt install fd-find`) | latest from apt |
 | [fzf](https://github.com/junegunn/fzf) | Fuzzy finder | 0.74.5 (Homebrew) |
 | [Atuin](https://github.com/atuinsh/atuin) | Shell history search and sync | 18.24.4 |
 | [carapace-bin](https://carapace-sh.github.io/carapace-bin/install.html) | Multi-shell command completion | not installed on this machine yet |
@@ -36,6 +37,10 @@ sudo apt install foot
 
 # zoxide
 curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
+
+# fd (Debian/Ubuntu names the binary fdfind; link it to fd)
+sudo apt install fd-find
+mkdir -p ~/.local/bin && ln -sf "$(command -v fdfind)" ~/.local/bin/fd
 
 # fzf
 brew install fzf
