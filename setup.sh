@@ -2,7 +2,8 @@
 #
 # setup.sh - install, fix, doctor and manage the terminal toolchain from README.md
 #
-# Targets: getnf fonts foot herdr zoxide eza bat fd fzf atuin carapace starship config
+# Targets: getnf fonts foot herdr zoxide eza bat fd fzf delta atuin carapace starship config
+# The delta target installs git-delta and sets it as git's pager in ~/.gitconfig.
 # The config target also adds shell reminders: running ls suggests eza, cat suggests bat.
 # Run `./setup.sh help` for usage.
 #
@@ -28,7 +29,20 @@ readonly END_MARK='# <<< tersek setup <<<'
 # Matches fzf shell integration, both `fzf --bash|--zsh` and the older ~/.fzf.bash|zsh.
 readonly FZF_RC_REGEX='fzf --(bash|zsh)|\.fzf\.(bash|zsh)'
 
-ALL_TARGETS=(getnf fonts foot herdr zoxide eza bat fd fzf atuin carapace starship config)
+ALL_TARGETS=(getnf fonts foot herdr zoxide eza bat fd fzf delta atuin carapace starship config)
+
+# git settings for delta, from https://dandavison.github.io/delta/get-started.html
+# Format: <git config key>|<value>
+DELTA_GIT_SETTINGS=(
+  "core.pager|delta"
+  "interactive.diffFilter|delta --color-only"
+  "delta.navigate|true"
+  "delta.dark|true"
+  "delta.side-by-side|true"
+  "delta.line-numbers|true"
+  "delta.syntax-theme|Catppuccin Mocha"
+  "merge.conflictStyle|zdiff3"
+)
 
 declare -A VERSION_CMD=(
   [getnf]="getnf -V"
@@ -39,6 +53,7 @@ declare -A VERSION_CMD=(
   [bat]="bat --version"
   [fd]="fd --version"
   [fzf]="fzf --version"
+  [delta]="delta --version"
   [atuin]="atuin --version"
   [carapace]="carapace --version"
   [starship]="starship --version"
@@ -303,6 +318,8 @@ do_install_fd() {
   fi
 }
 do_install_fzf()      { pkg_install fzf fzf; }
+# The formula and the apt package are called git-delta; the binary is delta.
+do_install_delta()    { pkg_install git-delta git-delta; }
 do_install_starship() {
   # -b keeps the install in ~/.local/bin so no sudo is needed.
   run_remote https://starship.rs/install.sh sh -b "$HOME/.local/bin" -y
@@ -331,6 +348,7 @@ do_update_eza()      { pkg_upgrade eza eza; }
 do_update_bat()      { pkg_upgrade bat bat; }
 do_update_fd()       { pkg_upgrade fd fd-find; }
 do_update_fzf()      { pkg_upgrade fzf fzf; }
+do_update_delta()    { pkg_upgrade git-delta git-delta; }
 do_update_carapace() { pkg_upgrade carapace carapace-bin; }
 do_update_starship() {
   local dir
@@ -425,6 +443,50 @@ config_herdr() {
   mkdir -p -- "$(dirname "$HERDR_CONF")" || return 1
   printf 'onboarding = false\n\n[ui]\nsidebar_collapsed_mode = "compact"\n' >"$HERDR_CONF" \
     && ok "herdr config created"
+}
+
+# --- delta: git config ---------------------------------------------------------
+# Sets the DELTA_GIT_SETTINGS in the global git config. Existing different values are
+# kept unless force=1 (fix/auto), in which case ~/.gitconfig is backed up first.
+config_delta() { # <force 0|1>
+  local force=$1 pair key want cur changes=() backed_up=0
+  have git || { warn "git not found; skipping delta git config"; return 0; }
+  have delta || { ((DRY_RUN)) || warn "delta is not installed; skipping git config"; return 0; }
+  for pair in "${DELTA_GIT_SETTINGS[@]}"; do
+    key=${pair%%|*} want=${pair#*|}
+    cur=$(git config --global --get "$key" 2>/dev/null || true)
+    if [[ $cur == "$want" ]]; then
+      ok "git $key = $want"
+    elif [[ -z $cur || $force == 1 ]]; then
+      changes+=("$key|$want")
+    else
+      warn "git $key is '$cur', delta wants '$want' (run: $SCRIPT_NAME fix delta)"
+    fi
+  done
+  ((${#changes[@]})) || return 0
+  info "updating global git config for delta"
+  for pair in "${changes[@]}"; do
+    key=${pair%%|*} want=${pair#*|}
+    ((backed_up)) || { backup_file "$HOME/.gitconfig"; backed_up=1; }
+    if run git config --global "$key" "$want"; then ((DRY_RUN)) || ok "git $key = $want"; else bad "git config $key failed"; fi
+  done
+}
+
+check_delta() {
+  local pair key want cur
+  check_bin delta
+  have git || { warn "git not found; cannot check delta git config"; return 0; }
+  cur=$(git config --global --get core.pager 2>/dev/null || true)
+  if [[ $cur == delta* ]] && ! have delta; then
+    bad "git core.pager is '$cur' but delta is not installed; git diff and git log will fail"
+  fi
+  for pair in "${DELTA_GIT_SETTINGS[@]}"; do
+    key=${pair%%|*} want=${pair#*|}
+    cur=$(git config --global --get "$key" 2>/dev/null || true)
+    if [[ $cur == "$want" ]]; then ok "git $key = $want"
+    else warn "git $key is '${cur:-unset}', delta wants '$want' (run: $SCRIPT_NAME fix delta)"
+    fi
+  done
 }
 
 # --- shell rc integration ------------------------------------------------------
@@ -628,6 +690,18 @@ install_target() {
   case $t in
     fonts)  install_fonts ;;
     config) apply_config 0 ;;
+    delta)
+      if have delta; then
+        ok "delta already installed ($(command -v delta))"
+      else
+        do_install_delta || { bad "delta install failed"; return 1; }
+        if ((DRY_RUN)); then echo "  [dry-run] would then set the delta git config"; return 0; fi
+        hash -r
+        have delta && ok "delta installed ($(command -v delta))" \
+          || { bad "delta installer finished but 'delta' is not on PATH"; return 1; }
+      fi
+      config_delta 0
+      ;;
     *)
       if have "$t"; then ok "$t already installed ($(command -v "$t"))"; return 0; fi
       "do_install_$t" || { bad "$t install failed"; return 1; }
@@ -670,6 +744,16 @@ fix_target() {
       install_fonts
       ;;
     config) apply_config 1 ;;
+    delta)
+      if ! have delta; then
+        install_target delta
+      else
+        if tool_version delta >/dev/null; then ok "delta works ($(command -v delta))"
+        else warn "delta is broken; reinstalling"; do_update_delta || bad "delta reinstall failed"
+        fi
+        config_delta 1
+      fi
+      ;;
     *)
       # A binary that exists but is not executable is invisible to `command -v`.
       if ! have "$t" && [[ -f $HOME/.local/bin/$t && ! -x $HOME/.local/bin/$t ]]; then
@@ -695,6 +779,7 @@ doctor_target() {
     getnf)  check_getnf ;;
     fonts)  check_fonts ;;
     config) check_config ;;
+    delta)  check_delta ;;
     *)      check_bin "$t" ;;
   esac
 }
@@ -753,6 +838,11 @@ Notes:
     (run with no command), target picker, prompts, spinners and summary.
     Run without a terminal, or set TERSEK_NO_GUM=1, to skip it.
   - Fonts are managed with getnf (getnf -i / -u / -U / -l).
+  - The delta target installs git-delta (brew, else apt) and sets core.pager,
+    interactive.diffFilter, delta.navigate, delta.dark, delta.side-by-side,
+    delta.line-numbers, delta.syntax-theme (Catppuccin Mocha) and merge.conflictStyle in the
+    global git config. install keeps values you already have; fix overrides them
+    (~/.gitconfig is backed up first).
   - Remote installers (getnf, herdr, zoxide, atuin, starship) are downloaded to a
     temp file and executed. Use --dry-run to see which ones would run.
   - Shell lines go in a managed block in ~/.bashrc (and ~/.zshrc if zsh is installed),

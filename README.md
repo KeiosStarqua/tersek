@@ -9,6 +9,7 @@ Notes to rebuild my terminal on a new machine.
 | [zoxide](https://github.com/ajeetdsouza/zoxide) | Smarter `cd` | 0.10.0 |
 | [fd](https://github.com/sharkdp/fd#installation) | Fast, friendly `find` alternative (`sudo apt install fd-find`) | latest from apt |
 | [fzf](https://github.com/junegunn/fzf) | Fuzzy finder | 0.74.5 (Homebrew) |
+| [delta](https://github.com/dandavison/delta) | Syntax-highlighting pager for git diff, show and log (`brew install git-delta`, binary is `delta`) | 0.20.1 (Homebrew) |
 | [Atuin](https://github.com/atuinsh/atuin) | Shell history search and sync | 18.24.4 |
 | [carapace-bin](https://carapace-sh.github.io/carapace-bin/install.html) | Multi-shell command completion | not installed on this machine yet |
 | [Starship](https://starship.rs) | Shell prompt | not installed on this machine yet |
@@ -160,6 +161,27 @@ before the Atuin lines:
 ```bash
 eval "$(fzf --bash)"
 ```
+
+### delta
+
+`./setup.sh install delta` installs `git-delta` (brew, else apt) and sets these in
+the global git config. Values you already have are kept; `./setup.sh fix delta`
+overrides them after backing up `~/.gitconfig`.
+
+```bash
+git config --global core.pager delta
+git config --global interactive.diffFilter "delta --color-only"
+git config --global delta.navigate true
+git config --global delta.dark true
+git config --global delta.side-by-side true
+git config --global delta.line-numbers true
+git config --global delta.syntax-theme "Catppuccin Mocha"
+git config --global merge.conflictStyle zdiff3
+```
+
+After that, use plain `git diff`, `git show` and `git log -p`; git pipes them through
+delta. In the pager, `n` and `N` jump between files. `./setup.sh doctor delta` checks
+the binary and every setting.
 
 ### Atuin
 
