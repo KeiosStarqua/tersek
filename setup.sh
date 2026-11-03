@@ -3,6 +3,7 @@
 # setup.sh - install, fix, doctor and manage the terminal toolchain from README.md
 #
 # Targets: getnf fonts foot herdr zoxide eza bat fzf atuin carapace starship config
+# The config target also adds shell reminders: running ls suggests eza, cat suggests bat.
 # Run `./setup.sh help` for usage.
 #
 # In an interactive terminal the script installs gum (https://github.com/charmbracelet/gum)
@@ -422,6 +423,25 @@ rc_has() { # <outside-content> <regex>; commented lines never count
   grep -Eq -- "^[^#]*($2)" <<<"$1"
 }
 
+# ls and cat keep working as before; in a terminal they also print a one-line tip.
+# The unalias line must stay outside the case block: bash expands aliases while it parses
+# a function name, so an existing `alias ls=...` would be a syntax error otherwise.
+reminder_snippet() {
+  cat <<'EOF'
+# ls -> eza and cat -> bat reminders (tip goes to stderr, only when output is a terminal)
+unalias ls cat 2>/dev/null
+case $- in *i*)
+  _tersek_remind() { # <old command> <new command>
+    [ -t 1 ] && command -v "$2" >/dev/null 2>&1 && printf 'tip: use %s instead of %s\n' "$2" "$1" >&2
+    return 0
+  }
+  ls()  { _tersek_remind ls eza; command ls --color=auto "$@"; }
+  cat() { _tersek_remind cat bat; command cat "$@"; }
+  ;;
+esac
+EOF
+}
+
 rc_wanted() { # <shell> <outside-content>
   local sh=$1 content=$2 brew_bin
   rc_has "$content" '\.local/bin' \
@@ -449,6 +469,7 @@ rc_wanted() { # <shell> <outside-content>
   if have starship && ! rc_has "$content" 'starship init'; then
     printf 'command -v starship >/dev/null 2>&1 && eval "$(starship init %s)"\n' "$sh"
   fi
+  rc_has "$content" '_tersek_remind' || reminder_snippet
 }
 
 rc_apply() { # <shell> <rc file>
@@ -548,6 +569,8 @@ check_rc_file() { # <shell> <rc>
     elif ((count > 1)); then warn "$name initialised $count times in $rc"
     fi
   done
+  grep -Eq -- '^[^#]*_tersek_remind' "$rc" \
+    || warn "ls/cat reminders missing in $rc (run: $SCRIPT_NAME fix config)"
   # fzf's Ctrl-R binding must come before atuin's, or it steals Ctrl-R.
   local fzf_line atuin_line
   fzf_line=$(grep -En '^[^#]*fzf --(bash|zsh)' "$rc" | head -n1 | cut -d: -f1)
@@ -720,6 +743,9 @@ Notes:
   - Shell lines go in a managed block in ~/.bashrc (and ~/.zshrc if zsh is installed),
     delimited by "$BEGIN_MARK". Lines you already have outside it are left alone.
     Files are backed up as <file>.tersek-bak.<timestamp> before any change.
+  - The managed block also defines ls and cat wrappers. They run the real command, then
+    in a terminal print "tip: use eza instead of ls" (or bat instead of cat) when eza/bat
+    is installed. Install the tools with: $SCRIPT_NAME install eza bat
 EOF
 }
 

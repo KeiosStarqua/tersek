@@ -107,6 +107,15 @@ Both source the Atuin env so login shells find the binary:
 
 ## Per-tool notes
 
+### ls and cat reminders
+
+`./setup.sh install config` adds two shell functions to the managed block in
+`~/.bashrc` (and `~/.zshrc`). `ls` and `cat` still run normally. In a terminal they
+also print `tip: use eza instead of ls` or `tip: use bat instead of cat` to stderr
+when eza or bat is installed. Piped output is not nagged. Install the tools with
+`./setup.sh install eza bat` (bat uses `sudo apt install bat`; on Debian/Ubuntu the
+script links `batcat` to `~/.local/bin/bat`).
+
 ### Foot
 
 No custom config. Foot runs on its defaults, with no `~/.config/foot/foot.ini`.
