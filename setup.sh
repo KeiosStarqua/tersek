@@ -4,6 +4,10 @@
 #
 # Targets: getnf fonts foot herdr zoxide eza fzf atuin carapace starship config
 # Run `./setup.sh help` for usage.
+#
+# In an interactive terminal the script installs gum (https://github.com/charmbracelet/gum)
+# when it is missing and uses it for the menu, target picker, confirmations, spinners and
+# summary. Without a terminal, or with TERSEK_NO_GUM=1, output stays plain text.
 
 set -uo pipefail
 
@@ -38,6 +42,7 @@ declare -A VERSION_CMD=(
 # --- state ---------------------------------------------------------------------
 DRY_RUN=0
 ASSUME_YES=0
+USE_GUM=0   # set by setup_gum when gum is installed and the session is interactive
 PASS=0 WARN=0 FAIL=0
 ORIG_PATH=$PATH
 
@@ -46,6 +51,7 @@ add_path() { [[ -d $1 && ":$PATH:" != *":$1:"* ]] && PATH="$1:$PATH"; return 0; 
 add_path /home/linuxbrew/.linuxbrew/bin
 add_path "$HOME/.linuxbrew/bin"
 add_path "$HOME/.atuin/bin"
+add_path "$HOME/.nix-profile/bin"
 add_path "$HOME/.local/bin"
 
 if [[ -t 1 ]]; then
@@ -55,7 +61,11 @@ else
 fi
 
 # --- output helpers ------------------------------------------------------------
-info() { printf '%s==>%s %s\n' "$C_BLU" "$C_OFF" "$*"; }
+info() {
+  if ((USE_GUM)); then gum style --bold --foreground 12 "==> $*"
+  else printf '%s==>%s %s\n' "$C_BLU" "$C_OFF" "$*"
+  fi
+}
 ok()   { PASS=$((PASS + 1)); printf '  %s✓%s %s\n' "$C_GRN" "$C_OFF" "$*"; }
 warn() { WARN=$((WARN + 1)); printf '  %s!%s %s\n' "$C_YEL" "$C_OFF" "$*"; }
 bad()  { FAIL=$((FAIL + 1)); printf '  %s✗%s %s\n' "$C_RED" "$C_OFF" "$*"; }
@@ -69,7 +79,40 @@ run() {
 }
 
 if ((EUID == 0)); then SUDO=(); elif have sudo; then SUDO=(sudo); else SUDO=(); fi
-as_root() { run "${SUDO[@]}" "$@"; }
+
+# Run a command under a gum spinner (plain when gum is off). Only external commands:
+# gum cannot run shell functions. Output is shown after the command ends.
+spin() { # <title> <cmd...>
+  local title=$1 out rc
+  shift
+  ((USE_GUM)) || { "$@"; return; }
+  # gum 2.0.2 loses stdout of quick commands under --show-output, so the command writes
+  # to a temp file and we print it ourselves once the spinner is gone.
+  out=$(mktemp "${TMPDIR:-/tmp}/tersek-out.XXXXXX") || { "$@"; return; }
+  gum spin --spinner dot --title "$title" -- bash -c 'out=$1; shift; exec "$@" >"$out" 2>&1' _ "$out" "$@"
+  rc=$?
+  cat -- "$out"
+  rm -f -- "$out"
+  return "$rc"
+}
+
+# Like run, but with a spinner for commands that take a while.
+run_slow() { # <title> <cmd...>
+  local title=$1
+  shift
+  if ((DRY_RUN)); then printf '  [dry-run] %s\n' "$*"; return 0; fi
+  spin "$title" "$@"
+}
+
+# Like run as root, with a spinner. sudo asks for the password first, outside the spinner,
+# because the spinner would hide the prompt.
+as_root_slow() { # <title> <cmd...>
+  local title=$1
+  shift
+  if ((DRY_RUN)); then printf '  [dry-run] %s\n' "${SUDO[*]:+${SUDO[*]} }$*"; return 0; fi
+  if ((${#SUDO[@]})); then "${SUDO[@]}" -v || return 1; fi
+  spin "$title" "${SUDO[@]}" "$@"
+}
 
 # Download an installer to a temp file, then run it with the given shell.
 # Usage: run_remote <url> <shell> [installer args...]
@@ -83,7 +126,7 @@ run_remote() {
   fi
   tmp=$(mktemp "${TMPDIR:-/tmp}/tersek.XXXXXX") || return 1
   if curl --proto '=https' --tlsv1.2 -fsSL --max-time 60 -o "$tmp" "$url"; then
-    timeout 300 "$shell" "$tmp" "$@" </dev/null
+    spin "Running installer from ${url#https://}" timeout 300 "$shell" "$tmp" "$@" </dev/null
     rc=$?
   else
     rc=1
@@ -100,9 +143,93 @@ backup_file() {
 confirm() {
   ((ASSUME_YES || DRY_RUN)) && return 0
   [[ -t 0 ]] || die "not a terminal; pass -y to run without a prompt"
+  if ((USE_GUM)); then gum confirm --default=false "$1"; return; fi
   local answer
   read -r -p "$1 [y/N] " answer
   [[ $answer == [yY]* ]]
+}
+
+# --- gum: install and UI helpers -----------------------------------------------
+install_gum_apt() { # Debian/Ubuntu: Charm's apt repo (gum is not in the default repos)
+  have curl && have gpg || { echo "apt needs curl and gpg to add the Charm repo" >&2; return 1; }
+  "${SUDO[@]}" mkdir -p /etc/apt/keyrings || return 1
+  curl --proto '=https' --tlsv1.2 -fsSL https://repo.charm.sh/apt/gpg.key \
+    | "${SUDO[@]}" gpg --dearmor --yes -o /etc/apt/keyrings/charm.gpg || return 1
+  echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" \
+    | "${SUDO[@]}" tee /etc/apt/sources.list.d/charm.list >/dev/null || return 1
+  "${SUDO[@]}" apt-get update && "${SUDO[@]}" apt-get install -y gum
+}
+
+# First package manager found wins, in the order of the gum README.
+install_gum() {
+  if have brew; then timeout 900 brew install gum </dev/null
+  elif have pacman; then "${SUDO[@]}" pacman -S --noconfirm gum
+  elif have dnf; then "${SUDO[@]}" dnf install -y gum
+  elif have nix-env; then nix-env -iA nixpkgs.gum
+  elif have flox; then flox install gum
+  elif have winget; then
+    winget install --id charmbracelet.gum -e --accept-package-agreements --accept-source-agreements
+  elif have scoop; then scoop install charm-gum
+  elif have apt-get; then install_gum_apt
+  else echo "no supported package manager found (brew, pacman, dnf, nix-env, flox, winget, scoop, apt-get)" >&2; return 1
+  fi
+}
+
+# Turn gum on for interactive sessions, installing it first if needed. Never fatal:
+# on any problem the script keeps running with plain output.
+setup_gum() {
+  [[ -t 0 && -t 1 ]] || return 0
+  [[ ${TERSEK_NO_GUM:-0} == 0 && ${TERM:-dumb} != dumb ]] || return 0
+  if ! have gum; then
+    if ((DRY_RUN)); then
+      printf '  [dry-run] gum is missing; would install it with the first available of brew, pacman, dnf, nix-env, flox, winget, scoop, apt-get\n'
+      return 0
+    fi
+    info "gum not found; installing it for a nicer interface"
+    if ! install_gum; then
+      printf 'note: could not install gum; continuing with plain output\n' >&2
+      return 0
+    fi
+    hash -r
+    add_path "$HOME/.nix-profile/bin"
+    add_path /home/linuxbrew/.linuxbrew/bin
+    have gum || { printf 'note: gum installed but not on PATH; open a new shell to use it. Continuing plain.\n' >&2; return 0; }
+  fi
+  gum --version >/dev/null 2>&1 || { printf 'note: gum does not run; continuing with plain output\n' >&2; return 0; }
+  USE_GUM=1
+}
+
+banner() { # <text...>
+  ((USE_GUM)) || return 0
+  gum style --border rounded --border-foreground 212 --padding "0 2" --bold "tersek setup" "$*"
+}
+
+pick_command() {
+  gum choose --header "What do you want to do?" \
+    "auto    install, fix, then doctor" \
+    "install install missing tools and config" \
+    "doctor  check everything, change nothing" \
+    "fix     repair broken tools and config" \
+    "update  upgrade installed tools" \
+    "status  show versions and paths" | awk '{print $1}'
+}
+
+pick_targets() {
+  gum choose --no-limit --height 12 \
+    --header "Targets (space toggles, enter confirms)" \
+    --selected "$(IFS=,; echo "${ALL_TARGETS[*]}")" \
+    "${ALL_TARGETS[@]}"
+}
+
+summary() { # <prefix text>
+  local text="$PASS ok, $WARN warnings, $FAIL failures" color=10
+  if ((USE_GUM)); then
+    ((WARN)) && color=11
+    ((FAIL)) && color=9
+    gum style --border rounded --border-foreground "$color" --padding "0 2" --margin "1 0 0 0" "$1$text"
+  else
+    printf '\n%s%s\n' "$1" "$text"
+  fi
 }
 
 tool_version() {
@@ -114,17 +241,17 @@ tool_version() {
 
 # brew when present (as in README), apt otherwise.
 pkg_install() { # <brew formula> <apt package>
-  if have brew; then run timeout 900 brew install "$1" </dev/null
-  elif have apt-get; then as_root apt-get install -y "$2"
+  if have brew; then run_slow "brew install $1" timeout 900 brew install "$1" </dev/null
+  elif have apt-get; then as_root_slow "apt install $2" apt-get install -y "$2"
   else bad "need brew or apt-get to install $1"; return 1
   fi
 }
 
 pkg_upgrade() { # <brew formula> <apt package>
   if have brew && brew list --formula "$1" >/dev/null 2>&1; then
-    run timeout 900 brew upgrade "$1" </dev/null
+    run_slow "brew upgrade $1" timeout 900 brew upgrade "$1" </dev/null
   elif have apt-get; then
-    as_root apt-get install -y --only-upgrade "$2"
+    as_root_slow "apt upgrade $2" apt-get install -y --only-upgrade "$2"
   else
     bad "no package manager found to upgrade $1"; return 1
   fi
@@ -136,7 +263,10 @@ do_install_getnf() {
   [[ -n $GETNF_TAG ]] && args+=("--tag=$GETNF_TAG")
   run_remote https://raw.githubusercontent.com/getnf/getnf/main/install.sh bash "${args[@]}"
 }
-do_install_foot()     { have apt-get && as_root apt-get install -y foot || { bad "foot: apt-get install failed or apt-get missing"; return 1; }; }
+do_install_foot() {
+  have apt-get && as_root_slow "apt install foot" apt-get install -y foot \
+    || { bad "foot: apt-get install failed or apt-get missing"; return 1; }
+}
 do_install_herdr()    { run_remote https://herdr.dev/install.sh sh; }
 do_install_zoxide()   { run_remote https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh sh; }
 do_install_atuin()    { run_remote https://setup.atuin.sh sh; }
@@ -147,7 +277,7 @@ do_install_starship() {
   run_remote https://starship.rs/install.sh sh -b "$HOME/.local/bin" -y
 }
 do_install_carapace() {
-  if have brew; then run timeout 900 brew install carapace </dev/null; return; fi
+  if have brew; then run_slow "brew install carapace" timeout 900 brew install carapace </dev/null; return; fi
   have apt-get && have gpg || { bad "carapace: need brew, or apt-get and gpg"; return 1; }
   if ((DRY_RUN)); then
     echo "  [dry-run] add apt.fury.io/rsteube apt repo and apt-get install carapace-bin"
@@ -157,13 +287,13 @@ do_install_carapace() {
     | "${SUDO[@]}" gpg --dearmor --yes -o /usr/share/keyrings/rsteube.gpg || return 1
   echo "deb [signed-by=/usr/share/keyrings/rsteube.gpg] https://apt.fury.io/rsteube/ /" \
     | "${SUDO[@]}" tee /etc/apt/sources.list.d/fury.list >/dev/null || return 1
-  "${SUDO[@]}" apt-get update && "${SUDO[@]}" apt-get install -y carapace-bin
+  "${SUDO[@]}" apt-get update && as_root_slow "apt install carapace-bin" apt-get install -y carapace-bin
 }
 
 # --- per-tool update -----------------------------------------------------------
 do_update_getnf()    { do_install_getnf; }
-do_update_foot()     { as_root apt-get install -y --only-upgrade foot; }
-do_update_herdr()    { run herdr update </dev/null; }
+do_update_foot()     { as_root_slow "apt upgrade foot" apt-get install -y --only-upgrade foot; }
+do_update_herdr()    { run_slow "herdr update" herdr update </dev/null; }
 do_update_zoxide()   { do_install_zoxide; }
 do_update_atuin()    { do_install_atuin; }
 do_update_eza()      { pkg_upgrade eza eza; }
@@ -196,7 +326,7 @@ install_fonts() {
   if ((${#missing[@]})); then
     local list
     list=$(IFS=,; echo "${missing[*]}")
-    run timeout 600 getnf -i "$list" </dev/null || { bad "getnf -i $list failed"; return 1; }
+    run_slow "Installing fonts: $list" timeout 600 getnf -i "$list" </dev/null || { bad "getnf -i $list failed"; return 1; }
   fi
   have fc-cache && run fc-cache -f
   ((DRY_RUN)) && return 0
@@ -443,7 +573,7 @@ update_target() {
   case $t in
     fonts)
       have getnf || { bad "getnf missing"; return 1; }
-      run timeout 900 getnf -U </dev/null && have fc-cache && run fc-cache -f
+      run_slow "Updating fonts" timeout 900 getnf -U </dev/null && have fc-cache && run fc-cache -f
       ;;
     config) echo "  nothing to update (use fix to re-apply config)" ;;
     *)
@@ -544,8 +674,13 @@ Options:
 
 Environment:
   FONT_FAMILY=$FONT_FAMILY   FONT_SIZE=$FONT_SIZE   NERD_FONTS=$NERD_FONTS   GETNF_TAG=<release>
+  TERSEK_NO_GUM=1   plain output; do not install or use gum
 
 Notes:
+  - In an interactive terminal, gum is installed if missing (brew, pacman, dnf, nix-env,
+    flox, winget, scoop, or the Charm apt repo on Debian/Ubuntu) and used for the menu
+    (run with no command), target picker, prompts, spinners and summary.
+    Run without a terminal, or set TERSEK_NO_GUM=1, to skip it.
   - Fonts are managed with getnf (getnf -i / -u / -U / -l).
   - Remote installers (getnf, herdr, zoxide, atuin, starship) are downloaded to a
     temp file and executed. Use --dry-run to see which ones would run.
@@ -556,7 +691,7 @@ EOF
 }
 
 main() {
-  local cmd=${1:-help} t valid
+  local cmd=${1:-} t valid explicit_targets
   shift || true
   local selected=()
   while (($#)); do
@@ -574,15 +709,38 @@ main() {
     esac
     shift
   done
-  ((${#selected[@]})) || selected=("${ALL_TARGETS[@]}")
+  explicit_targets=${#selected[@]}
 
   case $cmd in
-    help|-h|--help) usage; exit 0 ;;
+    ''|help|-h|--help|install|fix|update|auto|doctor|status) ;;
+    *) usage >&2; die "unknown command: $cmd" ;;
+  esac
+  case $cmd in help|-h|--help) usage; exit 0 ;; esac
+
+  setup_gum
+
+  if [[ -z $cmd ]]; then
+    ((USE_GUM)) || { usage; exit 0; }
+    cmd=$(pick_command) && [[ -n $cmd ]] || { echo "aborted"; exit 1; }
+  fi
+
+  # Interactive target picker, unless targets were named or -y asks for no prompts.
+  if ((USE_GUM && !ASSUME_YES && !explicit_targets)); then
+    case $cmd in
+      install|fix|update|auto)
+        mapfile -t selected < <(pick_targets)
+        ((${#selected[@]})) || { echo "no targets selected; aborted"; exit 1; }
+        ;;
+    esac
+  fi
+  ((${#selected[@]})) || selected=("${ALL_TARGETS[@]}")
+
+  banner "$cmd: ${selected[*]}"
+
+  case $cmd in
     install|fix|update|auto)
       confirm "$cmd: ${selected[*]}?" || { echo "aborted"; exit 1; }
       ;;
-    doctor|status) ;;
-    *) usage >&2; die "unknown command: $cmd" ;;
   esac
 
   for t in "${selected[@]}"; do
@@ -597,14 +755,14 @@ main() {
   done
 
   if [[ $cmd == auto ]]; then
-    printf '\n%s ok, %s warnings, %s failures during setup\n\n' "$PASS" "$WARN" "$FAIL"
+    summary "Setup: "
     PASS=0 WARN=0 FAIL=0
     hash -r
     for t in "${selected[@]}"; do doctor_target "$t"; done
   fi
 
   if [[ $cmd != status ]]; then
-    printf '\n%s ok, %s warnings, %s failures\n' "$PASS" "$WARN" "$FAIL"
+    summary "${cmd/auto/Doctor}: "
   fi
   ((FAIL == 0))
 }
