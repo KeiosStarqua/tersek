@@ -2,7 +2,7 @@
 #
 # setup.sh - install, fix, doctor and manage the terminal toolchain from README.md
 #
-# Targets: getnf fonts foot herdr zoxide fzf atuin carapace starship config
+# Targets: getnf fonts foot herdr zoxide eza fzf atuin carapace starship config
 # Run `./setup.sh help` for usage.
 
 set -uo pipefail
@@ -21,13 +21,14 @@ HERDR_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml"
 readonly BEGIN_MARK='# >>> tersek setup >>>'
 readonly END_MARK='# <<< tersek setup <<<'
 
-ALL_TARGETS=(getnf fonts foot herdr zoxide fzf atuin carapace starship config)
+ALL_TARGETS=(getnf fonts foot herdr zoxide eza fzf atuin carapace starship config)
 
 declare -A VERSION_CMD=(
   [getnf]="getnf -V"
   [foot]="foot --version"
   [herdr]="herdr --version"
   [zoxide]="zoxide --version"
+  [eza]="eza --version"
   [fzf]="fzf --version"
   [atuin]="atuin --version"
   [carapace]="carapace --version"
@@ -139,6 +140,7 @@ do_install_foot()     { have apt-get && as_root apt-get install -y foot || { bad
 do_install_herdr()    { run_remote https://herdr.dev/install.sh sh; }
 do_install_zoxide()   { run_remote https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh sh; }
 do_install_atuin()    { run_remote https://setup.atuin.sh sh; }
+do_install_eza()      { pkg_install eza eza; }
 do_install_fzf()      { pkg_install fzf fzf; }
 do_install_starship() {
   # -b keeps the install in ~/.local/bin so no sudo is needed.
@@ -164,6 +166,7 @@ do_update_foot()     { as_root apt-get install -y --only-upgrade foot; }
 do_update_herdr()    { run herdr update </dev/null; }
 do_update_zoxide()   { do_install_zoxide; }
 do_update_atuin()    { do_install_atuin; }
+do_update_eza()      { pkg_upgrade eza eza; }
 do_update_fzf()      { pkg_upgrade fzf fzf; }
 do_update_carapace() { pkg_upgrade carapace carapace-bin; }
 do_update_starship() {
